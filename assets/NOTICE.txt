@@ -1,0 +1,66 @@
+TalkText tray/application icon: Lucide mic, rasterized from source geometry by tools/make_icon.py.
+Source: https://github.com/lucide-icons/lucide/blob/main/icons/mic.svg
+White 2-unit outline, black canvas; local ICO sizes 16,24,32,48,64,128,256.
+
+ISC License
+Copyright (c) 2026 Lucide Icons and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+Native UI icons in src/visuals.cpp: Lucide SVG geometry translated to GDI+
+paths, retrieved 2026-09-19. No network or SVG decoding at runtime.
+Source base: https://github.com/lucide-icons/lucide/blob/main/icons/
+Contract name       Source file             UI role
+Microphone          mic.svg                 Record/microphone
+Wave                audio-lines.svg         Recording mode/audio
+Keyboard            keyboard.svg            Hotkey
+Text                type.svg                Text insertion/delivery
+Windows             panels-top-left.svg     Start with Windows (generic window)
+Tray                inbox.svg               Keep in system tray
+Hidden              eye-off.svg             Start hidden
+Power               power.svg               Quit
+Copy                copy.svg                Copy/recover clipboard
+Trash               trash.svg               Delete/clear history
+
+All icons share the original 24x24 view box, 2-unit outline, round caps and
+round joins. Native control icons use 22 logical pixels at 100% scale; the
+primary microphone uses a 56-pixel circular metal inset.
+Supplied rectangle and native font metrics scale geometry uniformly.
+Modifications: SVG circular endpoint arcs converted to GDI+ center arcs;
+SVG paths/rectangles embedded directly as native drawing operations.
+Windows uses a generic Lucide window metaphor, not a Microsoft logo.
+The ISC notice above applies to these Lucide contributions.
+
+Lucide's upstream LICENSE additionally includes the following MIT notice
+for Feather-derived icons, including power and trash:
+
+The MIT License (MIT)
+Copyright (c) 2013-present Cole Bemis
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

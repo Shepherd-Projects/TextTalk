@@ -1,0 +1,10 @@
+/build/
+/build-*/
+/dist/
+/.cache/
+/third_party/
+/models/
+__pycache__/
+*.user
+.env
+.env.*

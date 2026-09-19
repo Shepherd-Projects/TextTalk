@@ -1,0 +1,24 @@
+#include <windows.h>
+1 ICON "assets/mic.ico"
+1 RT_MANIFEST "app.manifest"
+201 RCDATA "src/material.hlsl"
+202 RCDATA "src/overlay.hlsl"
+301 WAVE "assets/sounds/start transcript.wav"
+302 WAVE "assets/sounds/stopped or error.wav"
+303 WAVE "assets/sounds/complete.wav"
+1 VERSIONINFO
+ FILEVERSION 1,2,2,0
+ PRODUCTVERSION 1,2,2,0
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "040904b0"
+  BEGIN
+   VALUE "FileDescription", "TalkText - local voice to text"
+   VALUE "ProductName", "TalkText"
+   VALUE "FileVersion", "1.2.2"
+  END
+ END
+END
