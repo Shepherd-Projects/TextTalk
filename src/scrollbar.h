@@ -7,6 +7,8 @@ namespace talktext {
 struct Scrollbar {
     HWND window{};
     void create(HWND parent,int id,COLORREF background);
+    // Track colour behind the thumb; it is keyed out so the parent shows through.
+    void recolour(COLORREF background);
     void layout(int x,int y,int width,int height);
     void update(int position,int count,int page);
     int destination(UINT code,int lineStep=1) const;

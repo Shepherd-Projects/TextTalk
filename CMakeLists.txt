@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(TalkText VERSION 1.2.2 LANGUAGES CXX RC)
+project(TalkText VERSION 1.3.0 LANGUAGES CXX RC)
 if(NOT WIN32)
   message(FATAL_ERROR "TalkText requires Windows 10 or later")
 endif()

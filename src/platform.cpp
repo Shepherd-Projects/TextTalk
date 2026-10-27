@@ -771,6 +771,13 @@ Settings loadSettings() {
     settings.hotkey.clear();
     for (uint32_t index = 0; index < keyCount; ++index) settings.hotkey.push_back(file.number<uint32_t>());
     settings.hotkey = normalizedChord(settings.hotkey);
+    // Appearance trails the chord; files saved before it keep the defaults.
+    if (file.remaining() != 0) {
+        settings.theme = file.number<uint32_t>();
+        settings.frostedGlass = file.number<uint32_t>();
+        if (settings.theme > 5 || settings.frostedGlass > 80 || settings.frostedGlass % 20)
+            fail(L"Saved settings contain invalid values.");
+    }
     file.finish();
     return settings;
 }
@@ -788,6 +795,8 @@ void saveSettings(const Settings& settings) {
     file.number<uint64_t>(settings.historyLimit);
     file.number<uint32_t>(static_cast<uint32_t>(chord.size()));
     for (UINT key : chord) file.number<uint32_t>(key);
+    file.number<uint32_t>(settings.theme);
+    file.number<uint32_t>(settings.frostedGlass);
     file.commit();
 }
 

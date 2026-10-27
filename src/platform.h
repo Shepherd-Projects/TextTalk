@@ -26,6 +26,9 @@ struct Settings {
     InsertMethod method = InsertMethod::Paste;
     size_t historyLimit = 100;
     std::vector<UINT> hotkey{VK_CONTROL, VK_LWIN, VK_SPACE};
+    // Orchard appearance: preset index (theme::Preset) and frosted glass percent (0 = off).
+    uint32_t theme = 2;
+    uint32_t frostedGlass = 0;
 };
 
 struct HistoryEntry {

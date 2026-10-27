@@ -8,14 +8,26 @@ namespace talktext::gpu {
 void initialize();
 void shutdown();
 // Composition frames are premultiplied and paced by the swap chain's waitable handle.
+// The window's visual sits behind its child windows: native controls that must
+// stay visible are layered children composited above it.
 HANDLE frameReady(HWND window);
 void begin(HWND window);
 void present(HWND window);
 void synchronize();
 void release(HWND window);
-void ink(HWND key,const RECT& bounds,unsigned revision,const void* pixels,UINT stride,bool disabled);
-void material(HDC destination,const RECT& bounds,float radius,float scale,
-              float hover,bool pressed,bool disabled,int kind,float position=0.0f,float seconds=0.0f);
+// Draws below go into the frame opened by begin(); `key` identifies a cached upload.
+// White-on-black LCD coverage tinted with `color`.
+void ink(const void* key,const RECT& bounds,unsigned revision,const void* pixels,UINT stride,COLORREF color);
+// Premultiplied BGRA image.
+void image(const void* key,const RECT& bounds,unsigned revision,const void* pixels,UINT stride);
+// Flat rounded rectangle in device pixels: fill (with its own alpha), hairline
+// border and inner focus ring; `opacity` fades all of it.
+struct Shape {
+    float radius{};
+    COLORREF fill{},border{},ring{};
+    float fillAlpha{1.0f},borderWidth{},ringWidth{},opacity{1.0f};
+};
+void material(const RECT& bounds,const Shape& shape);
 struct VoiceFrame {
     float amplitude{},centroid{},seconds{};
     bool finishing{},reducedMotion{};

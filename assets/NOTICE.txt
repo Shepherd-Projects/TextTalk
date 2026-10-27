@@ -1,6 +1,6 @@
-TalkText tray/application icon: Lucide mic, rasterized from source geometry by tools/make_icon.py.
+TalkText tray/application icon: Lucide mic on an Orchard-style tile, rasterized from source geometry by tools/make_icon.py.
 Source: https://github.com/lucide-icons/lucide/blob/main/icons/mic.svg
-White 2-unit outline, black canvas; local ICO sizes 16,24,32,48,64,128,256.
+Filled mic capsule and white 2-unit stand on a dark rounded tile; local ICO sizes 16,24,32,48,64,128,256.
 
 ISC License
 Copyright (c) 2026 Lucide Icons and Contributors
@@ -22,23 +22,15 @@ paths, retrieved 2026-09-19. No network or SVG decoding at runtime.
 Source base: https://github.com/lucide-icons/lucide/blob/main/icons/
 Contract name       Source file             UI role
 Microphone          mic.svg                 Record/microphone
-Wave                audio-lines.svg         Recording mode/audio
-Keyboard            keyboard.svg            Hotkey
-Text                type.svg                Text insertion/delivery
-Windows             panels-top-left.svg     Start with Windows (generic window)
-Tray                inbox.svg               Keep in system tray
-Hidden              eye-off.svg             Start hidden
 Power               power.svg               Quit
 Copy                copy.svg                Copy/recover clipboard
 Trash               trash.svg               Delete/clear history
 
 All icons share the original 24x24 view box, 2-unit outline, round caps and
-round joins. Native control icons use 22 logical pixels at 100% scale; the
-primary microphone uses a 56-pixel circular metal inset.
+round joins. Native control icons use 16 logical pixels at 100% scale.
 Supplied rectangle and native font metrics scale geometry uniformly.
 Modifications: SVG circular endpoint arcs converted to GDI+ center arcs;
 SVG paths/rectangles embedded directly as native drawing operations.
-Windows uses a generic Lucide window metaphor, not a Microsoft logo.
 The ISC notice above applies to these Lucide contributions.
 
 Lucide's upstream LICENSE additionally includes the following MIT notice

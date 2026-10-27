@@ -1,11 +1,15 @@
-// UI v4: text-free microphone field. Host owns envelopes, audio phase and lifetime.
+// Text-free microphone field on an Orchard floating surface. Host owns
+// envelopes, audio phase, lifetime and every colour.
 cbuffer Parameters : register(b0) {
-    float4 viewport;
-    float4 material;
-    float4 state;
+    float4 viewport; // width, height, DPI scale, audio phase
+    float4 shape;    // corner radius (logical px)
+    float4 fill;     // elevated surface
+    float4 border;   // hairline
+    float4 ring;     // accent: dots while speaking
     float4 sound;
     float4 bands0;
     float4 bands1;
+    float4 quiet;    // muted: dots at rest
 };
 
 float roundedDistance(float2 p, float2 halfSize, float radius) {
@@ -26,24 +30,14 @@ float4 main(float4 pixel : SV_POSITION, float2 uv : TEXCOORD0) : SV_TARGET {
     float pixelWidth = 1.0 / dpi;
     float2 p = (pixel.xy - viewport.xy * 0.5) / dpi;
     float2 halfSize = viewport.xy * (0.5 / dpi) - 0.5 * pixelWidth;
-    float radius = min(16.0, min(halfSize.x, halfSize.y));
+    float radius = min(shape.x, min(halfSize.x, halfSize.y));
     float edge = roundedDistance(p, halfSize, radius);
     float edgeAA = max(fwidth(edge), pixelWidth);
     float alpha = 1.0 - smoothstep(-0.5 * edgeAA, 0.5 * edgeAA, edge);
 
-    // Matte center; reflected light belongs to the narrow metal boundary only.
-    float faceLight = saturate(0.5 - p.y / max(2.0 * halfSize.y, 1.0));
-    float3 color = float3(0.035, 0.044, 0.051) + faceLight * 0.013;
-    float2 corner = p - clamp(p, -halfSize + radius, halfSize - radius);
-    float2 normal = corner / max(length(corner), 0.0001);
-    float key = pow(saturate(dot(normal, float2(-0.45, -0.893)) * 0.5 + 0.5), 5.0);
-    float rim = 1.0 - smoothstep(0.28, 0.95 + 0.5 * edgeAA, abs(edge + 0.62));
-    float3 metal = lerp(float3(0.18, 0.21, 0.24), float3(0.64, 0.69, 0.72), key);
-    float coolReflection = pow(saturate(dot(normal, float2(0.8, -0.6))), 8.0);
-    float warmReflection = pow(saturate(dot(normal, float2(-0.8, 0.6))), 8.0);
-    metal += coolReflection * float3(-0.025, 0.035, 0.10);
-    metal += warmReflection * float3(0.065, 0.025, -0.02);
-    color = lerp(color, metal, rim * 0.8);
+    // Flat face with a one-device-pixel hairline; no gradient, no shadow.
+    float hairline = saturate((edge + pixelWidth) / edgeAA + 0.5);
+    float3 color = lerp(fill.rgb, border.rgb, hairline);
 
     float energy = saturate(sound.x);
     float expansion = sqrt(energy);
@@ -88,7 +82,7 @@ float4 main(float4 pixel : SV_POSITION, float2 uv : TEXCOORD0) : SV_TARGET {
         for (int row = -1; row <= 1; ++row) {
             float visibility = row == 0 ? 1.0 : smoothstep(0.035, 0.4, expansion);
             float dotRadius = 1.0 + 0.55 * expansion + 0.22 * band * energy;
-            float brightness = lerp(0.34, 0.96, expansion);
+            float brightness = lerp(0.6, 1.0, expansion);
             if (row != 0) { dotRadius *= 0.8; brightness *= 0.82; }
             float angle = orbitPhase + row * (2.0 * pi / 3.0);
             float2 center = float2(column * spacing + 0.24 * spacing * expansion * cos(angle),
@@ -104,15 +98,15 @@ float4 main(float4 pixel : SV_POSITION, float2 uv : TEXCOORD0) : SV_TARGET {
                 visibility = row == 0 ? 1.0 - step(1.5, groupOffset)
                                       : 1.0 - step(0.5, groupOffset);
                 dotRadius = row == 0 ? 1.3 : 1.1;
-                brightness = 0.7;
+                brightness = 1.0;
                 center = float2(column * spacing, row * 5.0);
             }
             float distanceToDot = length(p - center) - dotRadius;
             float coverage = (1.0 - smoothstep(-0.5 * pixelWidth, 0.5 * pixelWidth, distanceToDot))
                              * visibility * valid;
-            float3 silver = lerp(float3(0.83, 0.90, 0.98), float3(0.98, 0.99, 1.0), row == 0 ? 0.8 : 0.35);
+            float3 tone = lerp(quiet.rgb, ring.rgb, finishing ? 0.0 : smoothstep(0.0, 0.35, expansion));
             dotCoverage = max(dotCoverage, coverage);
-            dotLight = max(dotLight, silver * brightness * coverage);
+            dotLight = max(dotLight, tone * brightness * coverage);
         }
     }
     // Keep every dot inside the matte face; premultiply after all composition.

@@ -1,4 +1,5 @@
 #include "scrollbar.h"
+#include "theme.h"
 #include <commctrl.h>
 #include <uxtheme.h>
 #include <objidl.h>
@@ -21,8 +22,9 @@ void paint(HWND window,HDC dc,COLORREF background) {
     POINT cursor{};GetCursorPos(&cursor);ScreenToClient(window,&cursor);
     const bool hover=PtInRect(&rect,cursor)!=FALSE;
     const bool active=GetCapture()==window;
-    Gdiplus::SolidBrush ink(active?Gdiplus::Color(255,194,205,215):hover?
-        Gdiplus::Color(255,148,164,177):Gdiplus::Color(255,86,103,116));
+    const auto& c=theme::colours;
+    const COLORREF tone=active?c.text:hover?c.muted:theme::mix(c.border,c.muted,0.25f);
+    Gdiplus::SolidBrush ink(Gdiplus::Color(255,GetRValue(tone),GetGValue(tone),GetBValue(tone)));
     Gdiplus::GraphicsPath path;
     path.AddArc(x,y,width,width,180,180);
     path.AddArc(x,y+height-width,width,width,0,180);path.CloseFigure();
@@ -47,10 +49,19 @@ LRESULT CALLBACK proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp,UINT_PTR,DWORD_PTR 
 }
 }
 void Scrollbar::create(HWND parent,int id,COLORREF background) {
-    window=CreateWindowExW(0,L"SCROLLBAR",nullptr,WS_CHILD|SBS_VERT,0,0,1,1,parent,
+    // Layered so it draws above the parent's composition visual; the keyed
+    // track lets the frosted panel show and leaves only the thumb.
+    window=CreateWindowExW(WS_EX_LAYERED,L"SCROLLBAR",nullptr,WS_CHILD|SBS_VERT,0,0,1,1,parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);
     if(!window)throw std::runtime_error("Cannot create scroll control");
-    SetWindowTheme(window,L"",L"");SetWindowSubclass(window,proc,1,background);
+    SetWindowTheme(window,L"",L"");
+    recolour(background);
+}
+void Scrollbar::recolour(COLORREF background) {
+    if(!window)return;
+    SetWindowSubclass(window,proc,1,background);
+    SetLayeredWindowAttributes(window,background,255,LWA_COLORKEY);
+    InvalidateRect(window,nullptr,FALSE);
 }
 void Scrollbar::layout(int x,int y,int width,int height) {
     if(!window)return;

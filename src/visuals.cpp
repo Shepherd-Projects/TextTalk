@@ -1,5 +1,6 @@
 #include "visuals.h"
 #include "gpu_visuals.h"
+#include "theme.h"
 #include <objidl.h>
 #include <gdiplus.h>
 #include <algorithm>
@@ -55,29 +56,6 @@ void prepare(Graphics& graphics, const RectF& clip) {
     graphics.SetClip(clip, CombineModeIntersect);
 }
 
-float fontScale(HDC dc, HFONT font, float height) {
-    LOGFONTW description{};
-    if (font && GetObjectW(font, sizeof(description), &description) && description.lfHeight) {
-        return (std::max)(0.5f, std::abs(static_cast<float>(description.lfHeight)) / 16.0f);
-    }
-    TEXTMETRICW metrics{};
-    if (GetTextMetricsW(dc, &metrics) && metrics.tmHeight > 0)
-        return (std::max)(0.5f, static_cast<float>(metrics.tmHeight) / 19.0f);
-    return (std::max)(0.5f, height / 36.0f);
-}
-
-void material(Graphics& graphics,const RectF& rect,float radius,bool raised,
-              float light,float scale,bool pressed=false,bool disabled=false,
-              bool =false,int kind=-1,float position=0.0f) {
-    RECT bounds{static_cast<LONG>(std::round(rect.X)),static_cast<LONG>(std::round(rect.Y)),
-        static_cast<LONG>(std::round(rect.GetRight())),static_cast<LONG>(std::round(rect.GetBottom()))};
-    graphics.Flush(FlushIntentionSync);
-    HDC dc=graphics.GetHDC();
-    try {gpu::material(dc,bounds,radius,scale,light,pressed,disabled,kind<0?(raised?0:1):kind,position);}
-    catch(...) {graphics.ReleaseHDC(dc);throw;}
-    graphics.ReleaseHDC(dc);
-}
-
 // Lucide's original 24-unit SVG geometry, embedded for native drawing.
 // Circular SVG arcs are converted to GDI+ arcs; no SVG decoder/runtime assets.
 // Sources, modifications and complete notices: assets/NOTICE.txt.
@@ -127,46 +105,6 @@ void drawIcon(Graphics& graphics, const RectF& rect, Icon which, Color color) {
         p.move(12, 19); p.line(12, 22);
         p.move(19, 10); p.line(19, 12); p.arc(7, false, true, 5, 12); p.line(5, 10);
         rounded(p.path, RectF(9, 2, 6, 13), 3);
-        break;
-    case Icon::Wave:
-        p.move(2, 10); p.line(2, 13);
-        p.move(6, 6); p.line(6, 17);
-        p.move(10, 3); p.line(10, 21);
-        p.move(14, 8); p.line(14, 15);
-        p.move(18, 5); p.line(18, 18);
-        p.move(22, 10); p.line(22, 13);
-        break;
-    case Icon::Keyboard:
-        for (float x : {6.0f, 10.0f, 14.0f, 18.0f}) { p.move(x, 8); p.line(x + 0.01f, 8); }
-        for (float x : {8.0f, 12.0f, 16.0f}) { p.move(x, 12); p.line(x + 0.01f, 12); }
-        p.move(7, 16); p.line(17, 16);
-        rounded(p.path, RectF(2, 4, 20, 16), 2);
-        break;
-    case Icon::Text:
-        p.move(12,4);p.line(12,20);
-        p.move(4,7);p.line(4,5);p.arc(1,false,true,5,4);
-        p.line(19,4);p.arc(1,false,true,20,5);p.line(20,7);
-        p.move(9,20);p.line(15,20);
-        break;
-    case Icon::Windows:
-        rounded(p.path, RectF(3, 3, 18, 18), 2);
-        p.move(3, 9); p.line(21, 9);
-        p.move(9, 21); p.line(9, 9);
-        break;
-    case Icon::Tray:
-        p.move(22, 12); p.line(16, 12); p.line(14, 15); p.line(10, 15); p.line(8, 12); p.line(2, 12);
-        p.move(5.45f, 5.11f); p.line(2, 12); p.line(2, 18); p.arc(2, false, false, 4, 20);
-        p.line(20, 20); p.arc(2, false, false, 22, 18); p.line(22, 12); p.line(18.55f, 5.11f);
-        p.arc(2, false, false, 16.76f, 4); p.line(7.24f, 4); p.arc(2, false, false, 5.45f, 5.11f);
-        p.path.CloseFigure();
-        break;
-    case Icon::Hidden:
-        p.move(10.733f, 5.076f); p.arc(10.744f, false, true, 21.938f, 11.651f);
-        p.arc(1, false, true, 21.938f, 12.347f); p.arc(10.747f, false, true, 20.494f, 14.837f);
-        p.move(14.084f, 14.158f); p.arc(3, false, true, 9.842f, 9.916f);
-        p.move(17.479f, 17.499f); p.arc(10.75f, false, true, 2.062f, 12.348f);
-        p.arc(1, false, true, 2.062f, 11.652f); p.arc(10.75f, false, true, 6.508f, 6.509f);
-        p.move(2, 2); p.line(22, 22);
         break;
     case Icon::Power:
         p.move(12, 2); p.line(12, 12);
@@ -219,103 +157,166 @@ struct InkBitmap {
     }
     ~InkBitmap(){SelectObject(dc,previous);DeleteObject(bitmap);DeleteDC(dc);}
 };
+
+Color opaque(COLORREF colour) {
+    return Color(255,GetRValue(colour),GetGValue(colour),GetBValue(colour));
 }
 
-void surface(HDC dc, const RECT& rect, float radius, bool raised, float light) {
-    if (!dc || rect.right <= rect.left || rect.bottom <= rect.top) return;
-    Graphics graphics(dc);
-    const RectF box = bounds(rect);
-    prepare(graphics, box);
-    const float scale = fontScale(dc, nullptr, box.Height);
-    material(graphics, box, radius, raised, unit(light), scale);
+// Cached white-on-black ClearType coverage, re-rasterized only when its inputs change.
+struct CachedInk {
+    std::wstring text;
+    HFONT font{};
+    int width{},height{};
+    unsigned flags{},revision{};
+    std::vector<unsigned char> pixels;
+};
+template<class Paint>
+const CachedInk& cachedInk(const void* key,std::wstring_view text,HFONT font,int width,int height,unsigned flags,Paint paint) {
+    static std::unordered_map<const void*,CachedInk> cache;
+    auto& ink=cache[key];
+    if(ink.width!=width||ink.height!=height||ink.text!=text||ink.font!=font||ink.flags!=flags) {
+        InkBitmap bitmap(width,height);
+        SelectObject(bitmap.dc,font);SetBkMode(bitmap.dc,TRANSPARENT);
+        paint(bitmap.dc);
+        GdiFlush();
+        ink.pixels.resize(static_cast<size_t>(width)*height*4);
+        std::memcpy(ink.pixels.data(),bitmap.pixels,ink.pixels.size());
+        ink.text=text;ink.font=font;ink.width=width;ink.height=height;ink.flags=flags;++ink.revision;
+    }
+    return ink;
+}
+
+RECT offset(const RECT& origin,const RectF& at) {
+    return {origin.left+static_cast<LONG>(std::round(at.X)),origin.top+static_cast<LONG>(std::round(at.Y)),
+        origin.left+static_cast<LONG>(std::round(at.GetRight())),origin.top+static_cast<LONG>(std::round(at.GetBottom()))};
+}
 }
 
 void selection(HDC dc,const RECT& rect,float scale,bool focused) {
+    const auto& c=theme::colours;
     Graphics graphics(dc);const RectF box=bounds(rect);prepare(graphics,box);
-    GraphicsPath path;rounded(path,inset(box,0.5f*scale),8*scale);
-    SolidBrush fill(Color(255,24,31,37));graphics.FillPath(&fill,&path);
+    GraphicsPath path;rounded(path,box,theme::RadiusControl*scale);
+    SolidBrush brush(opaque(theme::mix(c.surface,c.text,theme::SelectedTint)));graphics.FillPath(&brush,&path);
     if(focused) {
-        Pen outline(Color(255,112,132,147),scale);
-        graphics.DrawPath(&outline,&path);
+        const float width=theme::FocusWidth*scale;
+        GraphicsPath ring;rounded(ring,inset(box,width*0.5f),(theme::RadiusControl-1)*scale);
+        Pen outline(opaque(c.focus),width);
+        graphics.DrawPath(&outline,&ring);
     }
 }
 
-void icon(HDC dc, const RECT& rect, Icon which, COLORREF color) {
-    if (!dc || rect.right <= rect.left || rect.bottom <= rect.top) return;
-    Graphics graphics(dc);
-    const RectF box = bounds(rect);
-    prepare(graphics, box);
-    drawIcon(graphics, box, which, Color(255, GetRValue(color), GetGValue(color), GetBValue(color)));
+void text(const void* key,const RECT& rect,std::wstring_view value,HFONT font,COLORREF colour,UINT format) {
+    const int width=rect.right-rect.left,height=rect.bottom-rect.top;
+    if(width<=0||height<=0||value.empty())return;
+    const auto& ink=cachedInk(key,value,font,width,height,format,[&](HDC dc) {
+        RECT box{0,0,width,height};SetTextColor(dc,RGB(255,255,255));
+        DrawTextW(dc,value.data(),static_cast<int>(value.size()),&box,format|DT_NOPREFIX);
+    });
+    gpu::ink(key,rect,ink.revision,ink.pixels.data(),static_cast<UINT>(width)*4,colour);
+}
+
+void logo(const void* key,const RECT& rect,HICON icon) {
+    const int width=rect.right-rect.left,height=rect.bottom-rect.top;
+    ICONINFO info{};
+    if(width<=0||height<=0||!icon||!GetIconInfo(icon,&info))return;
+    struct Image {
+        HICON icon{};
+        int width{},height{};
+        unsigned revision{};
+        std::vector<unsigned char> pixels;
+    };
+    static std::unordered_map<const void*,Image> cache;
+    auto& image=cache[key];
+    if(image.icon!=icon||image.width!=width||image.height!=height) {
+        // The resource's 32-bit colour plane carries straight alpha; the compositor wants it premultiplied.
+        BITMAPINFO bits{};bits.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
+        bits.bmiHeader.biWidth=width;bits.bmiHeader.biHeight=-height;bits.bmiHeader.biPlanes=1;
+        bits.bmiHeader.biBitCount=32;bits.bmiHeader.biCompression=BI_RGB;
+        image.pixels.assign(static_cast<size_t>(width)*height*4,0);
+        HDC dc=GetDC(nullptr);
+        GetDIBits(dc,info.hbmColor,0,height,image.pixels.data(),&bits,DIB_RGB_COLORS);
+        ReleaseDC(nullptr,dc);
+        for(size_t i=0;i<image.pixels.size();i+=4)for(size_t k=0;k<3;++k)
+            image.pixels[i+k]=static_cast<unsigned char>(image.pixels[i+k]*image.pixels[i+3]/255);
+        image.icon=icon;image.width=width;image.height=height;++image.revision;
+    }
+    DeleteObject(info.hbmColor);DeleteObject(info.hbmMask);
+    gpu::image(key,rect,image.revision,image.pixels.data(),static_cast<UINT>(width)*4);
 }
 
 void button(HWND window,const RECT& rect,const wchar_t* label,HFONT font,Icon which,const ButtonState& state) {
     const int width=rect.right-rect.left,height=rect.bottom-rect.top;
     if(width<=0||height<=0)return;
+    const auto& c=theme::colours;
     const float scale=GetDpiForWindow(window)/96.0f;
     const RectF box(0,0,static_cast<float>(width),static_cast<float>(height));
-    const float radius=12*scale;
     const float light=state.disabled?0:unit(state.light);
-    auto metal=[&](const RectF& shape,float rounding,int kind,float position=0.0f) {
-        RECT at{rect.left+static_cast<LONG>(std::round(shape.X)),rect.top+static_cast<LONG>(std::round(shape.Y)),
-            rect.left+static_cast<LONG>(std::round(shape.GetRight())),rect.top+static_cast<LONG>(std::round(shape.GetBottom()))};
-        gpu::material(nullptr,at,rounding,scale,light,state.pressed&&!state.disabled,state.disabled,kind,position,state.seconds);
+    const bool pressed=state.pressed&&!state.disabled;
+    auto draw=[&](const RectF& at,gpu::Shape shape) {
+        shape.opacity=state.disabled?0.5f:1.0f;
+        gpu::material(offset(rect,at),shape);
     };
-    metal(box,radius,0);
-    RectF content=inset(box,16*scale);
+    gpu::Shape face;
+    face.radius=theme::RadiusControl*scale;
+    if(state.primary) {
+        face.fill=pressed?theme::mix(c.accent,c.canvas,0.15f):theme::mix(c.accent,c.text,0.15f*light);
+    } else {
+        const float tint=pressed?theme::PressedTint:theme::HoverTint*light;
+        const theme::Fill fill=theme::layer(theme::mix(state.row?c.surface:c.canvas,c.text,tint));
+        face.fill=fill.colour;face.fillAlpha=fill.alpha;
+        if(!state.row){face.border=c.border;face.borderWidth=std::round(scale);}
+    }
+    if(state.focused&&!state.disabled){face.ring=c.focus;face.ringWidth=theme::FocusWidth*scale;}
+    draw(box,face);
+    RectF content=inset(box,12*scale);
     content.Y=0;content.Height=box.Height;
     if(state.toggle) {
-        const float h=24*scale,w=46*scale;
-        RectF track(content.GetRight()-w,(box.Height-h)/2,w,h);
-        metal(track,8*scale,2,state.position);
+        const float h=20*scale,w=36*scale,position=unit(state.position);
+        const RectF track(content.GetRight()-w,std::round((box.Height-h)/2),w,h);
+        gpu::Shape rail;rail.radius=h/2;rail.fill=theme::mix(c.border,c.accent,position);
+        draw(track,rail);
         const float diameter=h-6*scale;
-        RectF thumb(track.X+3*scale+state.position*(w-diameter-6*scale),track.Y+3*scale,diameter,diameter);
-        metal(thumb,5*scale,3,state.position);
-        content.Width-=w+10*scale;
+        gpu::Shape thumb;thumb.radius=diameter/2;thumb.fill=theme::mix(c.muted,c.onAccent,position);
+        draw(RectF(track.X+3*scale+position*(w-diameter-6*scale),track.Y+3*scale,diameter,diameter),thumb);
+        content.Width-=w+12*scale;
     }
-    RectF iconBox;
-    if(which!=Icon::None) {
-        const float size=(state.primary?22.0f:20.0f)*scale;
-        iconBox=RectF(content.X,(box.Height-size)/2,size,size);
-        content.X+=size+9*scale;content.Width-=size+9*scale;
-    }
-    struct CachedInk {
-        std::wstring label;
-        HFONT font{};
-        int width{},height{};
-        bool disabled{},focused{};
-        Icon icon{};
-        unsigned revision{};
-        std::vector<unsigned char> pixels;
-    };
-    static std::unordered_map<HWND,CachedInk> cache;
-    auto& ink=cache[window];
     const std::wstring_view text=label?label:L"";
-    if(ink.width!=width||ink.height!=height||ink.label!=text||ink.font!=font||
-       ink.disabled!=state.disabled||ink.focused!=state.focused||ink.icon!=which) {
-        InkBitmap bitmap(width,height);
-        {
-            Graphics graphics(bitmap.dc);prepare(graphics,box);
-            if(which!=Icon::None)drawIcon(graphics,iconBox,which,Color(255,255,255,255));
-            if(state.focused&&!state.disabled) {
-                GraphicsPath focus;rounded(focus,inset(box,5*scale),radius-5*scale);
-                Pen ring(Color(255,170,170,170),scale);
-                graphics.DrawPath(&ring,&focus);
-            }
+    const unsigned flags=static_cast<unsigned>(which)|(state.primary?0x100u:0)|(state.row?0x200u:0)|(state.toggle?0x400u:0);
+    const auto& ink=cachedInk(window,text,font,width,height,flags,[&](HDC dc) {
+        // White coverage takes the ink colour; grey coverage reads as muted over the fill.
+        constexpr BYTE quiet=170;
+        // Settings rows read `Name: value`; the value sits muted at the right edge.
+        std::wstring_view name=text,value;
+        if(state.row&&!state.toggle)if(const size_t split=text.find(L": ");split!=text.npos) {
+            name=text.substr(0,split);value=text.substr(split+2);
         }
-        if(!text.empty()&&content.Width>0) {
-            SelectObject(bitmap.dc,font);SetTextColor(bitmap.dc,RGB(255,255,255));SetBkColor(bitmap.dc,RGB(0,0,0));
-            SetBkMode(bitmap.dc,OPAQUE);
-            RECT textRect{static_cast<LONG>(std::round(content.X)),0,
-                static_cast<LONG>(std::round(content.GetRight())),height};
-            const UINT alignment=which==Icon::None&&!state.toggle?DT_CENTER:DT_LEFT;
-            DrawTextW(bitmap.dc,label,-1,&textRect,alignment|DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS|DT_NOPREFIX);
+        const float iconSize=16*scale,iconGap=which==Icon::None?0:8*scale;
+        const float iconWidth=which==Icon::None?0:iconSize;
+        float x=content.X,right=content.GetRight();
+        if(!state.row) {
+            SIZE extent{};GetTextExtentPoint32W(dc,name.data(),static_cast<int>(name.size()),&extent);
+            x=std::max(content.X,(box.Width-(iconWidth+iconGap+extent.cx))/2);
         }
-        GdiFlush();
-        ink.pixels.resize(static_cast<size_t>(width)*height*4);
-        std::memcpy(ink.pixels.data(),bitmap.pixels,ink.pixels.size());
-        ink.label=text;ink.font=font;ink.width=width;ink.height=height;ink.disabled=state.disabled;
-        ink.focused=state.focused;ink.icon=which;++ink.revision;
-    }
-    gpu::ink(window,rect,ink.revision,ink.pixels.data(),static_cast<UINT>(width)*4,state.disabled);
+        if(which!=Icon::None) {
+            Graphics graphics(dc);prepare(graphics,box);
+            const BYTE tone=state.primary?255:quiet;
+            drawIcon(graphics,RectF(std::round(x),std::round((box.Height-iconSize)/2),iconSize,iconSize),which,Color(255,tone,tone,tone));
+        }
+        x+=iconWidth+iconGap;
+        if(!value.empty()) {
+            RECT valueRect{static_cast<LONG>(std::round(x)),0,static_cast<LONG>(std::round(right)),height};
+            SetTextColor(dc,RGB(quiet,quiet,quiet));
+            DrawTextW(dc,value.data(),static_cast<int>(value.size()),&valueRect,DT_RIGHT|DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS|DT_NOPREFIX);
+            SIZE extent{};GetTextExtentPoint32W(dc,value.data(),static_cast<int>(value.size()),&extent);
+            right=std::max(x,right-extent.cx-16*scale);
+        }
+        RECT nameRect{static_cast<LONG>(std::round(x)),0,static_cast<LONG>(std::round(right)),height};
+        if(!name.empty()&&nameRect.right>nameRect.left) {
+            SetTextColor(dc,RGB(255,255,255));
+            DrawTextW(dc,name.data(),static_cast<int>(name.size()),&nameRect,DT_LEFT|DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS|DT_NOPREFIX);
+        }
+    });
+    const COLORREF colour=state.disabled?c.muted:state.primary?c.onAccent:c.text;
+    gpu::ink(window,rect,ink.revision,ink.pixels.data(),static_cast<UINT>(width)*4,colour);
 }
 } // namespace talktext::visuals

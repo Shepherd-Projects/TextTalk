@@ -1,4 +1,5 @@
 #include "gpu_visuals.h"
+#include "theme.h"
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <dxgi1_3.h>
@@ -18,13 +19,18 @@ using Microsoft::WRL::ComPtr;
 void check(HRESULT result,const char* operation) {
     if(FAILED(result))throw std::runtime_error(std::string(operation)+" failed ("+std::to_string(static_cast<unsigned long>(result))+")");
 }
+// Mirrors the cbuffer of material.hlsl, overlay.hlsl and the ink shader.
 struct Parameters {
     float viewport[4]{};
-    float material[4]{};
-    float state[4]{};
+    float shape[4]{};
+    float fill[4]{},border[4]{},ring[4]{};
     float sound[4]{};
     float bands0[4]{},bands1[4]{};
+    float quiet[4]{};
 };
+void colour(float (&target)[4],COLORREF value) {
+    target[0]=GetRValue(value)/255.0f;target[1]=GetGValue(value)/255.0f;target[2]=GetBValue(value)/255.0f;target[3]=1.0f;
+}
 ComPtr<ID3DBlob> compile(const char* source,size_t length,const char* name,const char* profile) {
     ComPtr<ID3DBlob> code,errors;
     const HRESULT result=D3DCompile(source,length,name,nullptr,nullptr,"main",profile,
@@ -59,21 +65,14 @@ public:
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
     ComPtr<ID3D11VertexShader> vertex;
-    ComPtr<ID3D11PixelShader> metal,voice,text;
+    ComPtr<ID3D11PixelShader> flat,voice,text,picture;
     ComPtr<ID3D11BlendState> blend,lcdBlend;
     ComPtr<IDXGIFactory2> factory;
     ComPtr<IDCompositionDevice> composition;
     std::unordered_map<HWND,std::unique_ptr<Surface>> surfaces;
-    std::unordered_map<HWND,Ink> inks;
+    std::unordered_map<const void*,Ink> inks;
     Surface* active{};
     ComPtr<ID3D11Buffer> constants;
-    ComPtr<ID3D11Texture2D> target,staging;
-    ComPtr<ID3D11RenderTargetView> targetView;
-    int width{},height{};
-    HDC memory{};
-    HBITMAP bitmap{};
-    HGDIOBJ previous{};
-    void* pixels{};
 
     Renderer() {
         const D3D_FEATURE_LEVEL levels[]={D3D_FEATURE_LEVEL_11_0};
@@ -84,7 +83,7 @@ public:
         const auto vs=compile(source,sizeof(source)-1,"fullscreen triangle","vs_5_0");
         check(device->CreateVertexShader(vs->GetBufferPointer(),vs->GetBufferSize(),nullptr,&vertex),"Create visual vertex shader");
         const auto materialCode=resourceShader(201,"material.hlsl");
-        check(device->CreatePixelShader(materialCode->GetBufferPointer(),materialCode->GetBufferSize(),nullptr,&metal),"Create material shader");
+        check(device->CreatePixelShader(materialCode->GetBufferPointer(),materialCode->GetBufferSize(),nullptr,&flat),"Create material shader");
         const auto voiceCode=resourceShader(202,"overlay.hlsl");
         check(device->CreatePixelShader(voiceCode->GetBufferPointer(),voiceCode->GetBufferSize(),nullptr,&voice),"Create voice shader");
         D3D11_BUFFER_DESC description{};description.ByteWidth=sizeof(Parameters);
@@ -95,7 +94,7 @@ public:
         check(adapter->GetParent(IID_PPV_ARGS(&factory)),"Query swap chain factory");
         check(DCompositionCreateDevice(dxgi.Get(),IID_PPV_ARGS(&composition)),"Create compositor");
         constexpr char inkSource[]=
-            "cbuffer P:register(b0){float4 viewport;float4 material;float4 inkColor;};"
+            "cbuffer P:register(b0){float4 viewport;float4 shape;float4 inkColor;};"
             "Texture2D image:register(t0);"
             "struct O{float4 color:SV_Target0;float4 coverage:SV_Target1;};"
             "O main(float4 p:SV_POSITION,float2 uv:TEXCOORD0){"
@@ -104,6 +103,11 @@ public:
             "o.color=float4(c*inkColor.rgb,a);o.coverage=float4(c,a);return o;}";
         const auto inkCode=compile(inkSource,sizeof(inkSource)-1,"cached ink","ps_5_0");
         check(device->CreatePixelShader(inkCode->GetBufferPointer(),inkCode->GetBufferSize(),nullptr,&text),"Create ink shader");
+        constexpr char imageSource[]=
+            "cbuffer P:register(b0){float4 viewport;};Texture2D image:register(t0);"
+            "float4 main(float4 p:SV_POSITION,float2 uv:TEXCOORD0):SV_Target{return image.Load(int3(int2(uv*viewport.xy),0));}";
+        const auto imageCode=compile(imageSource,sizeof(imageSource)-1,"cached image","ps_5_0");
+        check(device->CreatePixelShader(imageCode->GetBufferPointer(),imageCode->GetBufferSize(),nullptr,&picture),"Create image shader");
         D3D11_BLEND_DESC blending{};auto& b=blending.RenderTarget[0];b.BlendEnable=TRUE;
         b.SrcBlend=D3D11_BLEND_ONE;b.DestBlend=D3D11_BLEND_INV_SRC_ALPHA;b.BlendOp=D3D11_BLEND_OP_ADD;
         b.SrcBlendAlpha=D3D11_BLEND_ONE;b.DestBlendAlpha=D3D11_BLEND_INV_SRC_ALPHA;b.BlendOpAlpha=D3D11_BLEND_OP_ADD;
@@ -112,12 +116,6 @@ public:
         b.DestBlend=D3D11_BLEND_INV_SRC1_COLOR;
         b.DestBlendAlpha=D3D11_BLEND_INV_SRC1_ALPHA;
         check(device->CreateBlendState(&blending,&lcdBlend),"Create native LCD coverage blending");
-        memory=CreateCompatibleDC(nullptr);
-        if(!memory)throw std::runtime_error("Cannot create native shader drawing context");
-    }
-    ~Renderer() {
-        if(bitmap){SelectObject(memory,previous);DeleteObject(bitmap);}
-        DeleteDC(memory);
     }
     Surface& surface(HWND window) {
         RECT rect{};GetClientRect(window,&rect);
@@ -135,7 +133,7 @@ public:
             check(next->chain->SetMaximumFrameLatency(1),"Set frame latency");
             next->ready=next->chain->GetFrameLatencyWaitableObject();
             if(!next->ready)throw std::runtime_error("Cannot obtain display pacing handle");
-            check(composition->CreateTargetForHwnd(window,TRUE,&next->target),"Create window composition target");
+            check(composition->CreateTargetForHwnd(window,FALSE,&next->target),"Create window composition target");
             check(composition->CreateVisual(&next->visual),"Create window visual");
             check(next->visual->SetContent(next->chain.Get()),"Attach swap chain");
             check(next->target->SetRoot(next->visual.Get()),"Attach window visual");
@@ -154,27 +152,6 @@ public:
         }
         return s;
     }
-    void reserve(int w,int h) {
-        if(w<=width&&h<=height)return;
-        context->OMSetRenderTargets(0,nullptr,nullptr);
-        targetView.Reset();target.Reset();staging.Reset();
-        width=std::max(width,(w+63)&~63);height=std::max(height,(h+63)&~63);
-        D3D11_TEXTURE2D_DESC desc{};
-        desc.Width=width;desc.Height=height;desc.MipLevels=1;desc.ArraySize=1;
-        desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;desc.SampleDesc.Count=1;
-        desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_RENDER_TARGET;
-        check(device->CreateTexture2D(&desc,nullptr,&target),"Allocate material target");
-        check(device->CreateRenderTargetView(target.Get(),nullptr,&targetView),"Create material target view");
-        desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
-        check(device->CreateTexture2D(&desc,nullptr,&staging),"Allocate material readback");
-        if(bitmap){SelectObject(memory,previous);DeleteObject(bitmap);bitmap=nullptr;}
-        BITMAPINFO info{};info.bmiHeader.biSize=sizeof(BITMAPINFOHEADER);
-        info.bmiHeader.biWidth=width;info.bmiHeader.biHeight=-height;
-        info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
-        bitmap=CreateDIBSection(memory,&info,DIB_RGB_COLORS,&pixels,nullptr,0);
-        if(!bitmap)throw std::runtime_error("Cannot allocate native material surface");
-        previous=SelectObject(memory,bitmap);
-    }
     void draw(ID3D11RenderTargetView* view,ID3D11PixelShader* shader,const Parameters& p,float x=0,float y=0,ID3D11BlendState* blending=nullptr) {
         context->UpdateSubresource(constants.Get(),0,nullptr,&p,0,0);
         context->OMSetRenderTargets(1,&view,nullptr);
@@ -187,15 +164,6 @@ public:
         context->PSSetShader(shader,nullptr,0);
         ID3D11Buffer* buffer=constants.Get();context->PSSetConstantBuffers(0,1,&buffer);
         context->Draw(3,0);
-    }
-    void readback(int w,int h) {
-        D3D11_BOX box{0,0,0,static_cast<UINT>(w),static_cast<UINT>(h),1};
-        context->CopySubresourceRegion(staging.Get(),0,0,0,0,target.Get(),0,&box);
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        check(context->Map(staging.Get(),0,D3D11_MAP_READ,0,&mapped),"Read shader surface");
-        for(int y=0;y<h;++y)std::memcpy(static_cast<char*>(pixels)+static_cast<size_t>(y)*width*4,
-            static_cast<const char*>(mapped.pData)+static_cast<size_t>(y)*mapped.RowPitch,static_cast<size_t>(w)*4);
-        context->Unmap(staging.Get(),0);
     }
 };
 std::unique_ptr<Renderer> renderer;
@@ -228,8 +196,9 @@ void synchronize() {
 void release(HWND window) {
     if(renderer){renderer->active=nullptr;renderer->surfaces.erase(window);}
 }
-void ink(HWND key,const RECT& bounds,unsigned revision,const void* pixels,UINT stride,bool disabled) {
-    auto& gpu=current();if(!gpu.active)throw std::runtime_error("Ink requires an active composition frame");
+// Uploads `pixels` once per revision and binds it for the next draw.
+void bindTexture(const void* key,const RECT& bounds,unsigned revision,const void* pixels,UINT stride) {
+    auto& gpu=current();if(!gpu.active)throw std::runtime_error("Drawing requires an active composition frame");
     auto& image=gpu.inks[key];
     if(!image.texture||image.revision!=revision) {
         image.view.Reset();image.texture.Reset();
@@ -237,45 +206,49 @@ void ink(HWND key,const RECT& bounds,unsigned revision,const void* pixels,UINT s
         desc.MipLevels=desc.ArraySize=1;desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;desc.SampleDesc.Count=1;
         desc.Usage=D3D11_USAGE_IMMUTABLE;desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
         D3D11_SUBRESOURCE_DATA data{pixels,stride,0};
-        check(gpu.device->CreateTexture2D(&desc,&data,&image.texture),"Upload cached control ink");
-        check(gpu.device->CreateShaderResourceView(image.texture.Get(),nullptr,&image.view),"Create ink view");
+        check(gpu.device->CreateTexture2D(&desc,&data,&image.texture),"Upload cached texture");
+        check(gpu.device->CreateShaderResourceView(image.texture.Get(),nullptr,&image.view),"Create texture view");
         image.revision=revision;
     }
     auto* view=image.view.Get();
     gpu.context->PSSetShaderResources(0,1,&view);
-    Parameters p{};p.viewport[0]=static_cast<float>(bounds.right-bounds.left);p.viewport[1]=static_cast<float>(bounds.bottom-bounds.top);
-    p.state[0]=(disabled?132.0f:238.0f)/255.0f;
-    p.state[1]=(disabled?140.0f:241.0f)/255.0f;
-    p.state[2]=(disabled?148.0f:243.0f)/255.0f;
-    gpu.draw(gpu.active->view.Get(),gpu.text.Get(),p,static_cast<float>(bounds.left),static_cast<float>(bounds.top),gpu.lcdBlend.Get());
-    view=nullptr;gpu.context->PSSetShaderResources(0,1,&view);
 }
-void material(HDC destination,const RECT& bounds,float radius,float scale,
-              float hover,bool pressed,bool disabled,int kind,float position,float seconds) {
+void drawTexture(ID3D11PixelShader* shader,const RECT& bounds,Parameters& p,ID3D11BlendState* blending) {
+    auto& gpu=current();
+    p.viewport[0]=static_cast<float>(bounds.right-bounds.left);p.viewport[1]=static_cast<float>(bounds.bottom-bounds.top);
+    gpu.draw(gpu.active->view.Get(),shader,p,static_cast<float>(bounds.left),static_cast<float>(bounds.top),blending);
+    ID3D11ShaderResourceView* none=nullptr;gpu.context->PSSetShaderResources(0,1,&none);
+}
+void ink(const void* key,const RECT& bounds,unsigned revision,const void* pixels,UINT stride,COLORREF color) {
+    bindTexture(key,bounds,revision,pixels,stride);
+    Parameters p{};colour(p.fill,color);
+    drawTexture(current().text.Get(),bounds,p,current().lcdBlend.Get());
+}
+void image(const void* key,const RECT& bounds,unsigned revision,const void* pixels,UINT stride) {
+    bindTexture(key,bounds,revision,pixels,stride);
+    Parameters p{};
+    drawTexture(current().picture.Get(),bounds,p,current().blend.Get());
+}
+void material(const RECT& bounds,const Shape& shape) {
     const int w=bounds.right-bounds.left,h=bounds.bottom-bounds.top;
     if(w<=0||h<=0)return;
     auto& gpu=current();
-    Parameters p{};p.viewport[0]=static_cast<float>(w);p.viewport[1]=static_cast<float>(h);p.viewport[2]=scale;p.viewport[3]=seconds;
-    p.material[0]=radius;p.material[1]=hover;p.material[2]=pressed?1.0f:0.0f;p.material[3]=static_cast<float>(kind);
-    p.state[0]=position;p.state[3]=disabled?1.0f:0.0f;
-    if(!destination) {
-        if(!gpu.active)throw std::runtime_error("Material requires an active composition frame");
-        gpu.draw(gpu.active->view.Get(),gpu.metal.Get(),p,static_cast<float>(bounds.left),static_cast<float>(bounds.top));
-        return;
-    }
-    gpu.reserve(w,h);
-    gpu.draw(gpu.targetView.Get(),gpu.metal.Get(),p);
-    gpu.readback(w,h);
-    BLENDFUNCTION blend{AC_SRC_OVER,0,255,AC_SRC_ALPHA};
-    AlphaBlend(destination,bounds.left,bounds.top,w,h,gpu.memory,0,0,w,h,blend);
-    GdiFlush();
+    if(!gpu.active)throw std::runtime_error("Material requires an active composition frame");
+    Parameters p{};p.viewport[0]=static_cast<float>(w);p.viewport[1]=static_cast<float>(h);
+    p.shape[0]=shape.radius;p.shape[1]=shape.borderWidth;p.shape[2]=shape.ringWidth;p.shape[3]=shape.opacity;
+    colour(p.fill,shape.fill);colour(p.border,shape.border);colour(p.ring,shape.ring);
+    p.fill[3]=shape.fillAlpha;
+    gpu.draw(gpu.active->view.Get(),gpu.flat.Get(),p,static_cast<float>(bounds.left),static_cast<float>(bounds.top));
 }
 void overlay(HWND window,float scale,const VoiceFrame& frame) {
     RECT rect{};GetClientRect(window,&rect);
     if(rect.right<=0||rect.bottom<=0||!IsWindowVisible(window))return;
     begin(window);auto& gpu=current();
     Parameters p{};p.viewport[0]=static_cast<float>(rect.right);p.viewport[1]=static_cast<float>(rect.bottom);
-    p.viewport[2]=scale;p.viewport[3]=frame.seconds;p.material[0]=16*scale;
+    p.viewport[2]=scale;p.viewport[3]=frame.seconds;p.shape[0]=theme::RadiusSurface;
+    const auto& c=theme::colours;
+    colour(p.fill,c.elevated);colour(p.border,c.border);
+    colour(p.ring,c.accent);colour(p.quiet,c.muted);
     p.sound[0]=frame.amplitude;p.sound[1]=frame.centroid;
     p.sound[2]=frame.finishing?1.0f:0.0f;p.sound[3]=frame.reducedMotion?1.0f:0.0f;
     std::copy_n(frame.bands.begin(),4,p.bands0);std::copy_n(frame.bands.begin()+4,4,p.bands1);
